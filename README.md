@@ -1,0 +1,4 @@
+- pip install -r requirements.txt
+- add images in folder **input_mages**
+- run cells in watermark-detection.ipynb
+- view result in folder **output_mages**
