@@ -41,14 +41,34 @@ class FigmaPipeline:
     async def _download_image(self, session: aiohttp.ClientSession, image_url: str, filename: str) -> str:
         """Download a single image asynchronously"""
         try:
-            async with session.get(image_url, ssl=self.ssl_context) as response:
-                if response.status == 200:
-                    filepath = os.path.join(self.input_dir, filename)
-                    with open(filepath, 'wb') as f:
-                        f.write(await response.read())
-                    return filepath
+            # Add headers to mimic browser request
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": f"https://www.figma.com/file/{self.figma_file_key}/"
+            }
+            
+            # First request to get the redirect URL
+            async with session.get(image_url, headers=headers, ssl=self.ssl_context, allow_redirects=False) as response:
+                if response.status in (301, 302, 303, 307, 308):
+                    # Get the S3 URL from the Location header
+                    s3_url = response.headers['Location']
+                    print(f"Redirected to S3 URL: {s3_url}")
+                    
+                    # Now download from the S3 URL
+                    async with session.get(s3_url, headers=headers, ssl=self.ssl_context) as s3_response:
+                        if s3_response.status == 200:
+                            filepath = os.path.join(self.input_dir, filename)
+                            with open(filepath, 'wb') as f:
+                                f.write(await s3_response.read())
+                            print(f"Successfully downloaded to: {filepath}")
+                            return filepath
+                        else:
+                            print(f"Failed to download from S3: {s3_response.status}")
+                            return None
                 else:
-                    print(f"Failed to download {image_url}: {response.status}")
+                    print(f"Failed to get redirect URL: {response.status}")
                     return None
         except Exception as e:
             print(f"Error downloading {image_url}: {e}")
@@ -92,7 +112,7 @@ class FigmaPipeline:
         
         # Get all image nodes from the file
         data = file_response.json()
-        image_nodes = []
+        image_urls = []
         
         def extract_image_nodes(node, path=""):
             current_path = f"{path}/{node.get('name', 'unnamed')}"
@@ -104,7 +124,10 @@ class FigmaPipeline:
                     for fill in node.get('fills', []):
                         if fill.get('type') == 'IMAGE':
                             print(f"Found image node: {current_path}")
-                            image_nodes.append(node['id'])
+                            if 'imageRef' in fill:
+                                # Create Figma image URL
+                                image_url = f"https://www.figma.com/file/{self.figma_file_key}/image/{fill['imageRef']}"
+                                image_urls.append(image_url)
                             break
             
             # Recursively check children
@@ -114,31 +137,11 @@ class FigmaPipeline:
         
         print("\nStarting node extraction...")
         extract_image_nodes(data['document'])
-        print(f"\nFound {len(image_nodes)} image nodes")
+        print(f"\nFound {len(image_urls)} image URLs")
         
-        if not image_nodes:
+        if not image_urls:
             print("No image nodes found in the file")
             return []
-            
-        # Get image URLs for all nodes
-        images_url = f"https://api.figma.com/v1/images/{self.figma_file_key}"
-        params = {
-            'ids': ','.join(image_nodes),
-            'format': 'png',
-            'scale': 1
-        }
-        
-        print(f"\nFetching image URLs from: {images_url}")
-        print(f"Node IDs: {params['ids']}")
-        
-        images_response = session.get(images_url, headers=headers, params=params)
-        
-        if images_response.status_code != 200:
-            raise Exception(f"Failed to get image URLs: {images_response.status_code} - {images_response.text}")
-        
-        images_data = images_response.json()
-        image_urls = list(images_data.get('images', {}).values())
-        print(f"\nRetrieved {len(image_urls)} image URLs")
         
         # Print all image URLs in debug mode
         print("\nImage URLs to be downloaded:")
