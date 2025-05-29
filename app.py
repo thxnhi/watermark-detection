@@ -114,7 +114,7 @@ if os.path.exists("result.json"):
                     if os.path.exists(output_path):
                         # Display image
                         image = Image.open(output_path)
-                        st.image(image, use_column_width=True)
+                        st.image(image, use_container_width=True)
                         
                         # Display status with color
                         if result["status"]:
