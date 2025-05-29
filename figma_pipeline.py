@@ -61,11 +61,16 @@ class FigmaPipeline:
             tasks = []
             for idx, url in enumerate(image_urls):
                 filename = f"image_batch{batch_num}_{idx}.png"
+                print(f"\nDownloading image {idx + 1}/{len(image_urls)} from batch {batch_num}")
+                print(f"URL: {url}")
+                print(f"Save as: {filename}")
                 task = self._download_image(session, url, filename)
                 tasks.append(task)
             
             downloaded_paths = await asyncio.gather(*tasks)
-            return [path for path in downloaded_paths if path is not None]
+            successful_downloads = [path for path in downloaded_paths if path is not None]
+            print(f"\nSuccessfully downloaded {len(successful_downloads)}/{len(image_urls)} images in batch {batch_num}")
+            return successful_downloads
 
     def _get_figma_images(self) -> List[str]:
         """Get image URLs from Figma file"""
@@ -134,6 +139,11 @@ class FigmaPipeline:
         images_data = images_response.json()
         image_urls = list(images_data.get('images', {}).values())
         print(f"\nRetrieved {len(image_urls)} image URLs")
+        
+        # Print all image URLs in debug mode
+        print("\nImage URLs to be downloaded:")
+        for idx, url in enumerate(image_urls, 1):
+            print(f"{idx}. {url}")
         
         return image_urls
 
