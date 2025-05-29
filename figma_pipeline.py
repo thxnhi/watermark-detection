@@ -5,6 +5,8 @@ import shutil
 from typing import List, Dict
 import asyncio
 import aiohttp
+import ssl
+import certifi
 from watermark_detection import run_inference as detect_watermarks
 
 class FigmaPipeline:
@@ -15,6 +17,11 @@ class FigmaPipeline:
         self.input_dir = "input_images"
         self.output_dir = "output_images"
         self._setup_directories()
+        
+        # Configure SSL context
+        self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
 
     def _setup_directories(self):
         """Create input and output directories if they don't exist"""
@@ -34,7 +41,7 @@ class FigmaPipeline:
     async def _download_image(self, session: aiohttp.ClientSession, image_url: str, filename: str) -> str:
         """Download a single image asynchronously"""
         try:
-            async with session.get(image_url) as response:
+            async with session.get(image_url, ssl=self.ssl_context) as response:
                 if response.status == 200:
                     filepath = os.path.join(self.input_dir, filename)
                     with open(filepath, 'wb') as f:
@@ -49,7 +56,8 @@ class FigmaPipeline:
 
     async def _process_batch(self, image_urls: List[str], batch_num: int) -> List[str]:
         """Process a batch of images asynchronously"""
-        async with aiohttp.ClientSession() as session:
+        connector = aiohttp.TCPConnector(ssl=self.ssl_context)
+        async with aiohttp.ClientSession(connector=connector) as session:
             tasks = []
             for idx, url in enumerate(image_urls):
                 filename = f"image_batch{batch_num}_{idx}.png"
@@ -68,7 +76,11 @@ class FigmaPipeline:
         # First get the file data to get node IDs
         file_url = f"https://api.figma.com/v1/files/{self.figma_file_key}"
         print(f"Fetching file data from: {file_url}")
-        file_response = requests.get(file_url, headers=headers)
+        
+        # Configure requests session with SSL verification disabled
+        session = requests.Session()
+        session.verify = False
+        file_response = session.get(file_url, headers=headers)
         
         if file_response.status_code != 200:
             raise Exception(f"Failed to get Figma file: {file_response.status_code} - {file_response.text}")
@@ -114,7 +126,7 @@ class FigmaPipeline:
         print(f"\nFetching image URLs from: {images_url}")
         print(f"Node IDs: {params['ids']}")
         
-        images_response = requests.get(images_url, headers=headers, params=params)
+        images_response = session.get(images_url, headers=headers, params=params)
         
         if images_response.status_code != 200:
             raise Exception(f"Failed to get image URLs: {images_response.status_code} - {images_response.text}")
