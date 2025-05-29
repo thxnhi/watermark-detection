@@ -8,6 +8,10 @@ import contextlib
 import json
 from PIL import Image
 import shutil
+import nest_asyncio
+
+# Apply nest_asyncio to allow nested event loops
+nest_asyncio.apply()
 
 def clear_all_data():
     """Clear all data folders and files"""
@@ -135,7 +139,8 @@ def capture_output():
     finally:
         sys.stdout, sys.stderr = old_out, old_err
 
-async def run_pipeline_with_status():
+def run_pipeline():
+    """Run the pipeline in a synchronous way"""
     try:
         if not figma_file_key or not figma_access_token:
             st.error("Please provide both Figma File Key and Access Token")
@@ -173,7 +178,11 @@ async def run_pipeline_with_status():
             status_placeholder.info(f"Processing batch {batch_num} of {total_batches}")
             
             batch = image_urls[i:i + batch_size]
-            downloaded_paths = await pipeline._process_batch(batch, batch_num)
+            # Run batch processing synchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            downloaded_paths = loop.run_until_complete(pipeline._process_batch(batch, batch_num))
+            loop.close()
             
             if downloaded_paths:
                 pipeline.run_inference(downloaded_paths)
@@ -192,4 +201,4 @@ async def run_pipeline_with_status():
 
 # Run button
 if st.button("Run Pipeline", type="primary"):
-    asyncio.run(run_pipeline_with_status()) 
+    run_pipeline() 
