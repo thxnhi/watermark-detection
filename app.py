@@ -46,8 +46,10 @@ def clear_all_data():
         os.makedirs("input_images", exist_ok=True)
         os.makedirs("output_images", exist_ok=True)
 
-# Initialize the app by clearing all data
-clear_all_data()
+# Initialize session state
+if 'initialized' not in st.session_state:
+    clear_all_data()
+    st.session_state.initialized = True
 
 st.set_page_config(
     page_title="Figma Watermark Detection",
@@ -68,6 +70,7 @@ with st.sidebar:
     # Add clear results button
     if st.button("Clear Results", type="secondary"):
         clear_all_data()
+        st.session_state.initialized = True
         st.success("All data cleared!")
         st.rerun()
 
@@ -102,18 +105,23 @@ if os.path.exists("result.json"):
             col_idx = idx % 3
             with cols[col_idx]:
                 try:
-                    # Display image
-                    image = Image.open(result["image"])
-                    st.image(image, use_column_width=True)
-                    
-                    # Display status with color
-                    if result["status"]:
-                        st.error("Watermark Detected")
-                    else:
-                        st.success("No Watermark")
+                    # Get the output image path
+                    output_path = result["image"]
+                    if os.path.exists(output_path):
+                        # Display image
+                        image = Image.open(output_path)
+                        st.image(image, use_column_width=True)
                         
-                    # Display filename
-                    st.caption(os.path.basename(result["image"]))
+                        # Display status with color
+                        if result["status"]:
+                            st.error("Watermark Detected")
+                        else:
+                            st.success("No Watermark")
+                            
+                        # Display filename
+                        st.caption(os.path.basename(output_path))
+                    else:
+                        st.error(f"Image not found: {output_path}")
                 except Exception as e:
                     st.error(f"Error loading image: {str(e)}")
 
@@ -133,6 +141,9 @@ async def run_pipeline_with_status():
             st.error("Please provide both Figma File Key and Access Token")
             return
 
+        # Clear previous results before starting new pipeline
+        clear_all_data()
+        
         status_placeholder.info("Initializing pipeline...")
         
         pipeline = FigmaPipeline(
