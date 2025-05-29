@@ -112,7 +112,7 @@ class FigmaPipeline:
         
         # Get all image nodes from the file
         data = file_response.json()
-        image_urls = []
+        image_urls_set = set()  # Use a set to automatically remove duplicates
         
         def extract_image_nodes(node, path=""):
             current_path = f"{path}/{node.get('name', 'unnamed')}"
@@ -127,7 +127,7 @@ class FigmaPipeline:
                             if 'imageRef' in fill:
                                 # Create Figma image URL
                                 image_url = f"https://www.figma.com/file/{self.figma_file_key}/image/{fill['imageRef']}"
-                                image_urls.append(image_url)
+                                image_urls_set.add(image_url)  # Add to set to remove duplicates
                             break
             
             # Recursively check children
@@ -137,7 +137,10 @@ class FigmaPipeline:
         
         print("\nStarting node extraction...")
         extract_image_nodes(data['document'])
-        print(f"\nFound {len(image_urls)} image URLs")
+        
+        # Convert set back to list
+        image_urls = list(image_urls_set)
+        print(f"\nFound {len(image_urls)} unique image URLs")
         
         if not image_urls:
             print("No image nodes found in the file")
