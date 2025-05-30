@@ -173,23 +173,28 @@ def run_pipeline():
         total_batches = (len(image_urls) + batch_size - 1) // batch_size
         progress_bar = progress_placeholder.progress(0)
         
-        for i in range(0, len(image_urls), batch_size):
-            batch_num = i // batch_size + 1
-            status_placeholder.info(f"Processing batch {batch_num} of {total_batches}")
-            
-            batch = image_urls[i:i + batch_size]
-            # Run batch processing synchronously
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            downloaded_paths = loop.run_until_complete(pipeline._process_batch(batch, batch_num))
+        # Create a single event loop for the entire pipeline
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            for i in range(0, len(image_urls), batch_size):
+                batch_num = i // batch_size + 1
+                status_placeholder.info(f"Processing batch {batch_num} of {total_batches}")
+                
+                batch = image_urls[i:i + batch_size]
+                # Run batch processing using the same event loop
+                downloaded_paths = loop.run_until_complete(pipeline._process_batch(batch, batch_num))
+                
+                if downloaded_paths:
+                    pipeline.run_inference(downloaded_paths)
+                    pipeline._clear_input_directory()
+                
+                progress = (batch_num / total_batches)
+                progress_bar.progress(progress)
+        finally:
+            # Clean up the event loop
             loop.close()
-            
-            if downloaded_paths:
-                pipeline.run_inference(downloaded_paths)
-                pipeline._clear_input_directory()
-            
-            progress = (batch_num / total_batches)
-            progress_bar.progress(progress)
         
         status_placeholder.success("Pipeline completed successfully!")
         st.rerun()  # Refresh the page to show new results
