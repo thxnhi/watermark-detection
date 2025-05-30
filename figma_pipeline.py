@@ -8,6 +8,8 @@ import aiohttp
 import ssl
 import certifi
 from watermark_detection import run_inference as detect_watermarks
+import traceback
+from datetime import datetime
 
 class FigmaPipeline:
     def __init__(self, figma_file_key: str, figma_access_token: str, batch_size: int = 10):
@@ -22,6 +24,10 @@ class FigmaPipeline:
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
+        
+        # Add batch tracking
+        self.processed_batches = set()
+        self.batch_lock = asyncio.Lock()
 
     def _setup_directories(self):
         """Create input and output directories if they don't exist"""
@@ -72,25 +78,50 @@ class FigmaPipeline:
                     return None
         except Exception as e:
             print(f"Error downloading {image_url}: {e}")
+            traceback.print_exc()
             return None
 
     async def _process_batch(self, image_urls: List[str], batch_num: int) -> List[str]:
         """Process a batch of images asynchronously"""
-        connector = aiohttp.TCPConnector(ssl=self.ssl_context)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            tasks = []
-            for idx, url in enumerate(image_urls):
-                filename = f"image_batch{batch_num}_{idx}.png"
-                print(f"\nDownloading image {idx + 1}/{len(image_urls)} from batch {batch_num}")
-                print(f"URL: {url}")
-                print(f"Save as: {filename}")
-                task = self._download_image(session, url, filename)
-                tasks.append(task)
+        async with self.batch_lock:  # Ensure only one batch is processed at a time
+            if batch_num in self.processed_batches:
+                print(f"Batch {batch_num} already processed, skipping...")
+                return []
+                
+            print(f"\nProcessing batch {batch_num} at {datetime.now()}")
             
-            downloaded_paths = await asyncio.gather(*tasks)
-            successful_downloads = [path for path in downloaded_paths if path is not None]
-            print(f"\nSuccessfully downloaded {len(successful_downloads)}/{len(image_urls)} images in batch {batch_num}")
-            return successful_downloads
+            try:
+                connector = aiohttp.TCPConnector(ssl=self.ssl_context)
+                async with aiohttp.ClientSession(connector=connector) as session:
+                    tasks = []
+                    for idx, url in enumerate(image_urls):
+                        filename = f"image_batch{batch_num}_{idx}.png"
+                        print(f"\nDownloading image {idx + 1}/{len(image_urls)} from batch {batch_num}")
+                        print(f"URL: {url}")
+                        print(f"Save as: {filename}")
+                        task = self._download_image(session, url, filename)
+                        tasks.append(task)
+                    
+                    downloaded_paths = await asyncio.gather(*tasks)
+                    successful_downloads = [path for path in downloaded_paths if path is not None]
+                    print(f"\nSuccessfully downloaded {len(successful_downloads)}/{len(image_urls)} images in batch {batch_num}")
+                    
+                    if successful_downloads:
+                        try:
+                            # Run inference and update JSON
+                            self.run_inference(successful_downloads)
+                            self.processed_batches.add(batch_num)
+                            print(f"Successfully processed batch {batch_num}")
+                        except Exception as e:
+                            print(f"Error during inference for batch {batch_num}: {e}")
+                            traceback.print_exc()
+                    
+                    return successful_downloads
+                    
+            except Exception as e:
+                print(f"Error processing batch {batch_num}: {e}")
+                traceback.print_exc()
+                return []
 
     def _get_figma_images(self) -> List[str]:
         """Get image URLs from Figma file"""
@@ -159,29 +190,39 @@ class FigmaPipeline:
             # Get all image URLs from Figma
             image_urls = self._get_figma_images()
             
+            if not image_urls:
+                print("No images found to process")
+                return
+                
             # Process images in batches
+            total_batches = (len(image_urls) + self.batch_size - 1) // self.batch_size
+            print(f"\nStarting pipeline with {total_batches} batches")
+            
             for i in range(0, len(image_urls), self.batch_size):
+                batch_num = i // self.batch_size + 1
                 batch = image_urls[i:i + self.batch_size]
-                print(f"Processing batch {i//self.batch_size + 1}")
                 
-                # Download batch of images
-                downloaded_paths = await self._process_batch(batch, i//self.batch_size + 1)
+                print(f"\nProcessing batch {batch_num} of {total_batches}")
+                await self._process_batch(batch, batch_num)
                 
-                if downloaded_paths:
-                    # Run inference on the batch
-                    self.run_inference(downloaded_paths)
-                    
-                    # Clear input directory after processing
-                    self._clear_input_directory()
+                # Clear input directory after each batch
+                self._clear_input_directory()
                 
-                print(f"Completed batch {i//self.batch_size + 1}")
-                
+            print("\nPipeline completed!")
+            print(f"Successfully processed {len(self.processed_batches)} batches")
+            
         except Exception as e:
             print(f"Pipeline error: {e}")
+            traceback.print_exc()
 
     def run_inference(self, image_paths: List[str]):
         """Run watermark detection on the given images"""
-        detect_watermarks(image_paths)
+        try:
+            detect_watermarks(image_paths)
+        except Exception as e:
+            print(f"Error in run_inference: {e}")
+            traceback.print_exc()
+            raise  # Re-raise to handle in the batch processing
 
 async def main():
     # Replace these with your actual Figma credentials
